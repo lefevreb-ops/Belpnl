@@ -57,6 +57,37 @@ CREATE TABLE IF NOT EXISTS fact_gov_finance (
     PRIMARY KEY (source_id, sector_code, item_code, unit_code, year)
 );
 
+CREATE TABLE IF NOT EXISTS dim_cofog (
+    cofog_code   TEXT PRIMARY KEY,           -- TOTAL, GF01 (division), GF0101 (group)
+    label        TEXT NOT NULL,
+    parent_code  TEXT,
+    level        INTEGER NOT NULL            -- 0 total, 1 division, 2 group
+);
+
+-- Expenditure by function (COFOG), Eurostat gov_10a_exp
+CREATE TABLE IF NOT EXISTS fact_gov_cofog (
+    source_id    TEXT NOT NULL REFERENCES dim_source(source_id),
+    sector_code  TEXT NOT NULL REFERENCES dim_sector(sector_code),
+    cofog_code   TEXT NOT NULL REFERENCES dim_cofog(cofog_code),
+    item_code    TEXT NOT NULL REFERENCES dim_item(item_code),
+    unit_code    TEXT NOT NULL REFERENCES dim_unit(unit_code),
+    year         INTEGER NOT NULL,
+    value        REAL,
+    flag         TEXT,
+    run_id       INTEGER REFERENCES etl_run(run_id),
+    PRIMARY KEY (source_id, sector_code, cofog_code, item_code, unit_code, year)
+);
+
+-- Who pays whom between government levels (items <type>PAY_<receiver>)
+CREATE VIEW IF NOT EXISTS v_intergov_transfers AS
+SELECT f.unit_code, f.year,
+       substr(f.item_code, 1, 2)                   AS transfer_type,
+       f.sector_code                               AS payer,
+       substr(f.item_code, instr(f.item_code, '_') + 1) AS receiver,
+       f.value, f.flag
+FROM fact_gov_finance f
+WHERE f.item_code GLOB 'D[479]PAY_S131[1-4]';
+
 -- Consolidation bridge: sum of subsectors, eliminations and consolidated S13.
 CREATE VIEW IF NOT EXISTS v_consolidation AS
 SELECT f.item_code, f.unit_code, f.year,

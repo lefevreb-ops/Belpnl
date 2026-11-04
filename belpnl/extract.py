@@ -8,13 +8,15 @@ from . import config
 
 
 def build_url(dataset=config.DATASET, geo=config.GEO, sectors=None, units=None,
-              since=config.SINCE_YEAR):
+              since=config.SINCE_YEAR, filters=None):
     sectors = sectors or [s[0] for s in config.SECTORS]
     units = units or config.UNITS
     params = [("format", "JSON"), ("lang", "EN"), ("geo", geo),
               ("sinceTimePeriod", str(since))]
     params += [("sector", s) for s in sectors]
     params += [("unit", u) for u in units]
+    for dim, codes in (filters or {}).items():
+        params += [(dim, c) for c in codes]
     return f"{config.EUROSTAT_API}/{dataset}?{urllib.parse.urlencode(params)}"
 
 
@@ -27,7 +29,8 @@ def fetch(url, raw_dir=None, timeout=120):
     if raw_dir:
         Path(raw_dir).mkdir(parents=True, exist_ok=True)
         stamp = doc.get("updated", "unknown").replace(":", "").replace("-", "")[:15]
-        (Path(raw_dir) / f"{config.DATASET}_{config.GEO}_{stamp}.json").write_bytes(body)
+        name = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1]
+        (Path(raw_dir) / f"{name}_{config.GEO}_{stamp}.json").write_bytes(body)
     return doc
 
 

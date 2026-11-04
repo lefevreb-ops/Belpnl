@@ -37,6 +37,11 @@ button { cursor: pointer; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .seg button { border: 0; border-radius: 0; }
 .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; }
+.tabs button { border: 0; border-radius: 0; background: none; padding: 8px 12px; color: var(--muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+td.heat { background: color-mix(in srgb, var(--accent) calc(var(--h) * 38%), transparent); }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
@@ -49,6 +54,7 @@ td { text-align: right; }
 tr:hover td { background: var(--row-hover); }
 tr.d0 td { background: var(--row-total); font-weight: 650; }
 tr.d1 td { font-weight: 550; }
+tr.d2 td { font-weight: 400; }
 tr.other td { color: var(--muted); font-style: italic; }
 td.elim, th.elim { background: var(--elim) !important; }
 td.cons, th.cons { font-weight: 650; }
@@ -58,6 +64,11 @@ td.cons, th.cons { font-weight: 650; }
 sup.flag { color: var(--muted); font-size: 10px; margin-left: 2px; }
 .notes { color: var(--muted); font-size: 12px; margin-top: 14px; }
 .notes p { margin: 4px 0; }
+@media (max-width: 640px) {
+  th:first-child, td:first-child { white-space: normal; min-width: 150px; max-width: 170px; }
+  td .code { display: none; }
+  th, td { padding: 6px 8px; }
+}
 .empty { padding: 40px; text-align: center; color: var(--muted); }
 </style>
 </head>
@@ -66,18 +77,25 @@ sup.flag { color: var(--muted); font-size: 10px; margin-left: 2px; }
   <h1>Belgian general government — consolidated P&amp;L</h1>
   <p class="sub" id="subtitle"></p>
 
+  <nav class="tabs" role="tablist" aria-label="Statement">
+    <button data-stmt="pnl" aria-selected="true">P&amp;L</button>
+    <button data-stmt="cofog" aria-selected="false">Expenditure by function</button>
+    <button data-stmt="xfer" aria-selected="false">Transfers between governments</button>
+  </nav>
+
   <div class="controls">
-    <div>
-      <div class="seg" role="group" aria-label="View">
+    <div id="layoutCtl">
+      <div class="seg" role="group" aria-label="Layout">
         <button data-view="cons" aria-pressed="true">By subsector</button>
         <button data-view="ts" aria-pressed="false">Over time</button>
       </div>
     </div>
     <label id="yearCtl">Year <select id="year"></select></label>
     <label id="sectorCtl" hidden>Sector <select id="sector"></select></label>
+    <label id="typeCtl" hidden>Flow <select id="type"></select></label>
     <label>Unit <select id="unit"></select></label>
     <label id="fromCtl" hidden>From <select id="from"></select></label>
-    <div><button id="expand">Expand all</button> <button id="collapse">Collapse all</button></div>
+    <div id="treeCtl"><button id="expand">Expand all</button> <button id="collapse">Collapse all</button></div>
   </div>
 
   <div class="card"><div class="scroll"><table id="t"></table></div></div>
@@ -87,12 +105,18 @@ sup.flag { color: var(--muted); font-size: 10px; margin-left: 2px; }
 <script>
 const DATA = /*__DATA__*/null;
 const $ = (id) => document.getElementById(id);
-const state = { view: "cons", unit: Object.keys(DATA.units)[0], year: null, sector: null, from: null, open: new Set() };
+const SECT = Object.fromEntries(DATA.sectors.map(s => [s.code, s.label]));
+const state = { stmt: "pnl", view: "cons", unit: Object.keys(DATA.unitLabels)[0], year: null,
+  sector: DATA.sectors[DATA.sectors.length - 1].code, from: null, type: "ALL", open: {} };
 
-const U = () => DATA.units[state.unit];
-const lines = DATA.lines;
-const byId = Object.fromEntries(lines.map(l => [l.id, l]));
-DATA.lines.filter(l => l.depth === 0).forEach(l => state.open.add(l.id));
+const ST = () => DATA.statements[state.stmt];
+const U = () => ST().units[state.unit];
+const yearsOf = () => state.stmt === "xfer"
+  ? Object.keys(DATA.transfers[state.unit]).map(Number).sort((a, b) => a - b) : U().years;
+for (const [k, st] of Object.entries(DATA.statements)) {
+  st.byId = Object.fromEntries(st.lines.map(l => [l.id, l]));
+  state.open[k] = new Set(st.lines.filter(l => l.depth === 0).map(l => l.id));
+}
 
 function fmt(v) {
   if (v === null || v === undefined) return "–";
@@ -101,95 +125,146 @@ function fmt(v) {
   return v < 0 && /[1-9]/.test(s) ? "−" + s : s;
 }
 function visible(l) {
-  let p = l.parent;
-  while (p) { if (!state.open.has(p)) return false; p = byId[p].parent; }
+  let p = l.parent; const open = state.open[state.stmt];
+  while (p) { if (!open.has(p)) return false; p = ST().byId[p].parent; }
   return true;
 }
 function columns() {
-  const u = U();
   if (state.view === "cons") {
-    const cols = [];
-    DATA.sectors.filter(s => s.kind === "sub").forEach(s => cols.push({ key: s.code, year: state.year, label: s.label }));
+    const cols = DATA.sectors.filter(s => s.kind === "sub").map(s => ({ key: s.code, year: state.year, label: s.label }));
     cols.push({ key: "SUM", year: state.year, label: "Σ subsectors" });
     cols.push({ key: "ELIM", year: state.year, label: "Consolidation eliminations", cls: "elim" });
     DATA.sectors.filter(s => s.kind === "cons").forEach(s => cols.push({ key: s.code, year: state.year, label: s.label, cls: "cons" }));
     return cols;
   }
-  return u.years.filter(y => y >= state.from).map(y => ({ key: state.sector, year: y, label: String(y) }));
+  return U().years.filter(y => y >= state.from).map(y => ({ key: state.sector, year: y, label: String(y) }));
 }
+const val = (c, id) => ((U().values[c.key] || {})[c.year] || {})[id];
 function flagFor(l, c) {
   if (!l.item) return "";
   const f = (((U().flags || {})[c.key] || {})[c.year] || {})[l.item];
   return f ? `<sup class="flag" title="Eurostat flag">${f}</sup>` : "";
 }
-function hasValue(l) {
-  // hide residual lines that are empty everywhere in the current table
-  if (!l.other) return true;
-  return columns().some(c => { const v = ((U().values[c.key] || {})[c.year] || {})[l.id]; return v !== undefined && v !== null && Math.abs(v) >= 0.05; });
+function shown(l, cols) {
+  if (!l.other) return true;   // hide residual lines that are empty in the current table
+  return cols.some(c => /[1-9]/.test(fmt(val(c, l.id))));
 }
-function render() {
-  const u = U(), t = $("t");
-  if (!u.years.length) { t.innerHTML = `<tr><td class="empty">No data loaded yet — run <code>python -m belpnl all</code>.</td></tr>`; return; }
-  const cols = columns();
-  let h = `<thead><tr><th>${u.label}</th>${cols.map(c => `<th class="${c.cls || ""}">${c.label}</th>`).join("")}</tr></thead><tbody>`;
-  for (const l of lines) {
-    if (!visible(l) || !hasValue(l)) continue;
-    const tog = l.hasKids ? `<span class="tog" data-id="${l.id}">${state.open.has(l.id) ? "▾" : "▸"}</span>` : `<span class="tog"></span>`;
-    const pad = 8 + l.depth * 18;
-    h += `<tr class="d${l.depth}${l.other ? " other" : ""}"><td style="padding-left:${pad}px">${tog}${l.label}${l.item ? `<span class="code">${l.item}</span>` : ""}</td>`;
+function renderStatement() {
+  const u = U(), t = $("t"), cols = columns(), open = state.open[state.stmt];
+  let h = `<thead><tr><th>${DATA.unitLabels[state.unit]}</th>${cols.map(c => `<th class="${c.cls || ""}">${c.label}</th>`).join("")}</tr></thead><tbody>`;
+  for (const l of ST().lines) {
+    if (!visible(l) || !shown(l, cols)) continue;
+    const tog = l.hasKids ? `<span class="tog" data-id="${l.id}">${open.has(l.id) ? "▾" : "▸"}</span>` : `<span class="tog"></span>`;
+    const code = l.item && state.stmt === "pnl" ? `<span class="code">${l.item}</span>` : "";
+    h += `<tr class="d${Math.min(l.depth, 2)}${l.other ? " other" : ""}"><td style="padding-left:${8 + l.depth * 18}px">${tog}${l.label}${code}</td>`;
     for (const c of cols) {
-      const v = ((u.values[c.key] || {})[c.year] || {})[l.id];
-      const neg = v < 0 && (l.id === "RES" || l.id === "PRIM" || c.key === "ELIM") ? " neg" : "";
+      const v = val(c, l.id);
+      const neg = v < 0 && /[1-9]/.test(fmt(v)) && (l.id === "RES" || l.id === "PRIM" || c.key === "ELIM") ? " neg" : "";
       h += `<td class="${c.cls || ""}${neg}">${fmt(v)}${flagFor(l, c)}</td>`;
     }
     h += "</tr>";
   }
   t.innerHTML = h + "</tbody>";
+}
+function renderTransfers() {
+  const subs = DATA.sectors.filter(s => s.kind === "sub").map(s => s.code);
+  const yr = (DATA.transfers[state.unit] || {})[state.year] || {};
+  const types = state.type === "ALL" ? DATA.transferTypes.map(t => t.code) : [state.type];
+  const m = {}; let max = 0;
+  for (const p of subs) { m[p] = {}; for (const r of subs) {
+    if (p === r) continue;
+    let v = null; for (const t of types) { const x = ((yr[t] || {})[p] || {})[r]; if (x != null) v = (v || 0) + x; }
+    m[p][r] = v; if (v > max) max = v;
+  } }
+  let h = `<thead><tr><th>Paid by ↓ / received by →</th>${subs.map(r => `<th>${SECT[r]}</th>`).join("")}<th class="cons">Total paid</th></tr></thead><tbody>`;
+  const colTot = Object.fromEntries(subs.map(r => [r, 0]));
+  for (const p of subs) {
+    let rowTot = 0;
+    h += `<tr><td>${SECT[p]}</td>`;
+    for (const r of subs) {
+      if (p === r) { h += `<td>·</td>`; continue; }
+      const v = m[p][r]; rowTot += v || 0; colTot[r] += v || 0;
+      h += `<td class="heat" style="--h:${max ? (v || 0) / max : 0}">${fmt(v)}</td>`;
+    }
+    h += `<td class="cons">${fmt(rowTot)}</td></tr>`;
+  }
+  const grand = Object.values(colTot).reduce((a, b) => a + b, 0);
+  h += `<tr class="d0"><td>Total received</td>${subs.map(r => `<td>${fmt(colTot[r])}</td>`).join("")}<td class="cons">${fmt(grand)}</td></tr>`;
+  $("t").innerHTML = h + "</tbody>";
+}
+function render() {
+  const xfer = state.stmt === "xfer";
+  $("layoutCtl").hidden = $("treeCtl").hidden = xfer;
+  $("typeCtl").hidden = !xfer;
+  $("yearCtl").hidden = !xfer && state.view !== "cons";
+  $("sectorCtl").hidden = $("fromCtl").hidden = xfer || state.view !== "ts";
+  xfer ? renderTransfers() : renderStatement();
   notes();
 }
 function notes() {
-  const u = U(), n = [];
-  n.push("Source: Eurostat <code>" + DATA.meta.dataset + "</code> (ESA 2010 government finance statistics), geo " + DATA.meta.geo +
-    (DATA.meta.source_updated ? ", dataset updated " + DATA.meta.source_updated.slice(0, 10) : "") +
-    (DATA.meta.loaded_at ? ", loaded " + DATA.meta.loaded_at.slice(0, 10) : "") + ".");
-  n.push("Expenditure is shown as positive amounts. Each subsector is consolidated internally; “Consolidation eliminations” = general government (S13) − Σ subsectors, i.e. flows between government levels (e.g. federal transfers to Communities, Regions and social security).");
-  n.push("“Other / not allocated” reconciles listed components with the reported total. Flags: p = provisional, e = estimated, b = break in series, d = definition differs.");
-  if (u.missing_items.length) n.push("Items not present in the loaded data: " + u.missing_items.join(", ") + ".");
-  if (u.checks.length) n.push(u.checks.length + " sector-years where revenue − expenditure differs from reported B9.");
+  const n = [], runs = DATA.meta.runs.map(r => `<code>${r.source.split(":")[1]}</code> (updated ${(r.source_updated || "").slice(0, 10)})`);
+  n.push("Source: Eurostat, ESA 2010 government finance statistics, geo " + DATA.meta.geo + ": " + runs.join(", ") + ".");
+  if (state.stmt === "pnl") {
+    n.push("Expenditure is shown as positive amounts. Each subsector is consolidated internally; “Consolidation eliminations” = general government (S13) − Σ subsectors, i.e. flows between government levels, visible on the lines “from / to other levels of government”.");
+    n.push("Balancing lines (italic) reconcile listed components with the reported total. Cash benefits by function are “of which” items reported by Eurostat. Flags: p = provisional, e = estimated, b = break in series, d = definition differs.");
+  } else if (state.stmt === "cofog") {
+    n.push("Total expenditure by function of government (COFOG): 10 divisions, expandable into groups. Transfers between levels of government are recorded under the function they finance (e.g. federal funding of Communities in GF0108) and eliminated in S13.");
+    n.push("COFOG is transmitted separately from the main aggregates; its totals can differ slightly (below 0.7%) from total expenditure in the P&L for recent years.");
+  } else {
+    n.push("Who pays whom between levels of government, as reported by the paying subsector (current transfers D7, capital transfers D9 and property income D4). These flows are what disappears in the consolidated general government accounts.");
+    n.push("Receivers may record the same flow slightly differently (timing, classification), so this matrix can differ from the eliminations column of the P&L.");
+  }
+  if (state.stmt !== "xfer") {
+    const u = U();
+    if (u.missing_items.length) n.push("Items not present in the loaded data: " + u.missing_items.join(", ") + ".");
+    if (state.stmt === "pnl" && u.checks.length) n.push(u.checks.length + " sector-years where revenue − expenditure differs from reported B9.");
+  }
   $("notes").innerHTML = n.map(x => `<p>${x}</p>`).join("");
 }
+function refreshYears() {
+  const ys = yearsOf();
+  if (!ys.includes(state.year)) state.year = ys[ys.length - 1];
+  $("year").innerHTML = ys.slice().reverse().map(y => `<option${y === state.year ? " selected" : ""}>${y}</option>`).join("");
+  if (state.stmt !== "xfer") {
+    if (!state.from || !ys.includes(state.from)) state.from = ys[Math.max(0, ys.length - 10)];
+    $("from").innerHTML = ys.map(y => `<option${y === state.from ? " selected" : ""}>${y}</option>`).join("");
+  }
+}
 function init() {
-  const u = U();
-  $("unit").innerHTML = Object.entries(DATA.units).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("");
-  const years = u.years.slice().reverse();
-  $("year").innerHTML = years.map(y => `<option>${y}</option>`).join("");
-  $("from").innerHTML = u.years.map(y => `<option>${y}</option>`).join("");
+  if (!DATA.statements.cofog) document.querySelector('[data-stmt="cofog"]').remove();
+  $("unit").innerHTML = Object.entries(DATA.unitLabels).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
   $("sector").innerHTML = DATA.sectors.slice().reverse().map(s => `<option value="${s.code}">${s.label}</option>`).join("");
-  state.year = years[0]; state.sector = $("sector").value;
-  state.from = u.years[Math.max(0, u.years.length - 10)];
-  $("from").value = state.from;
-  $("subtitle").textContent = "Revenue, expenditure and balance by level of government, ESA 2010" + (u.years.length ? ` · ${u.years[0]}–${u.years[u.years.length - 1]}` : "");
+  $("type").innerHTML = `<option value="ALL">All flows</option>` + DATA.transferTypes.map(t => `<option value="${t.code}">${t.label}</option>`).join("");
+  const ys = DATA.statements.pnl.units[state.unit].years;
+  $("subtitle").textContent = "Revenue, expenditure and balance by level of government, ESA 2010" + (ys.length ? ` · ${ys[0]}–${ys[ys.length - 1]}` : "");
+  refreshYears();
 
+  document.querySelectorAll("[data-stmt]").forEach(b => b.onclick = () => {
+    state.stmt = b.dataset.stmt;
+    document.querySelectorAll("[data-stmt]").forEach(x => x.setAttribute("aria-selected", x === b));
+    refreshYears(); render();
+  });
   document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {
     state.view = b.dataset.view;
     document.querySelectorAll("[data-view]").forEach(x => x.setAttribute("aria-pressed", x === b));
-    $("yearCtl").hidden = state.view !== "cons";
-    $("sectorCtl").hidden = $("fromCtl").hidden = state.view !== "ts";
     render();
   });
   $("year").onchange = e => { state.year = +e.target.value; render(); };
   $("sector").onchange = e => { state.sector = e.target.value; render(); };
   $("from").onchange = e => { state.from = +e.target.value; render(); };
-  $("unit").onchange = e => { state.unit = e.target.value; render(); };
-  $("expand").onclick = () => { lines.filter(l => l.hasKids).forEach(l => state.open.add(l.id)); render(); };
-  $("collapse").onclick = () => { state.open.clear(); render(); };
+  $("type").onchange = e => { state.type = e.target.value; render(); };
+  $("unit").onchange = e => { state.unit = e.target.value; refreshYears(); render(); };
+  $("expand").onclick = () => { ST().lines.filter(l => l.hasKids).forEach(l => state.open[state.stmt].add(l.id)); render(); };
+  $("collapse").onclick = () => { state.open[state.stmt].clear(); render(); };
   $("t").onclick = e => {
     const id = e.target.dataset && e.target.dataset.id; if (!id) return;
-    state.open.has(id) ? state.open.delete(id) : state.open.add(id); render();
+    const o = state.open[state.stmt]; o.has(id) ? o.delete(id) : o.add(id); render();
   };
   render();
 }
-init();
+if (!DATA.statements.pnl.units[state.unit].years.length) {
+  document.querySelector("main").insertAdjacentHTML("beforeend", `<p class="empty">No data loaded yet — run <code>python -m belpnl all</code>.</p>`);
+} else init();
 </script>
 </body>
 </html>

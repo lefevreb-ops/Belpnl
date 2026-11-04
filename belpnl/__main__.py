@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from . import db, extract, report
+from . import config, db, extract, report
 
 DEFAULT_DB = "data/belpnl.sqlite"
 DEFAULT_RAW = "data/raw"
@@ -33,17 +33,19 @@ def main(argv=None):
     con = db.connect(args.db)
 
     if args.cmd in ("extract", "all"):
-        url = extract.build_url(since=args.since)
-        print(f"Fetching {url}")
-        try:
-            doc = extract.fetch(url, raw_dir=args.raw_dir)
-        except OSError as exc:
-            print(f"Download failed: {exc}\nOpen the URL above in a browser, save the JSON, "
-                  "then run: python -m belpnl load <file.json>", file=sys.stderr)
-            return 1
-        recs, labels = extract.parse_jsonstat(doc)
-        n = db.load(con, recs, labels, origin=url, source_updated=doc.get("updated"))
-        print(f"Loaded {n} rows (source updated {doc.get('updated')})")
+        for dataset, filters, _ in config.DATASETS.values():
+            url = extract.build_url(dataset=dataset, since=args.since, filters=filters)
+            print(f"Fetching {url}")
+            try:
+                doc = extract.fetch(url, raw_dir=args.raw_dir)
+            except OSError as exc:
+                print(f"Download failed: {exc}\nOpen the URL above in a browser, save the JSON, "
+                      "then run: python -m belpnl load <file.json>", file=sys.stderr)
+                return 1
+            recs, labels = extract.parse_jsonstat(doc)
+            n = db.load(con, recs, labels, origin=url, source_updated=doc.get("updated"),
+                        dataset=dataset)
+            print(f"Loaded {n} rows from {dataset} (source updated {doc.get('updated')})")
     if args.cmd == "load":
         doc = extract.load_file(args.file)
         recs, labels = extract.parse_jsonstat(doc)
@@ -51,11 +53,12 @@ def main(argv=None):
         print(f"Loaded {n} rows from {args.file}")
     if args.cmd in ("report", "all"):
         data = report.render(con, args.out)
-        for u, d in data["units"].items():
-            if d["missing_items"]:
-                print(f"[{u}] items not found in source: {', '.join(d['missing_items'])}")
-            if d["checks"]:
-                print(f"[{u}] {len(d['checks'])} result-vs-B9 check differences")
+        for name, st in data["statements"].items():
+            for u, d in st["units"].items():
+                if d["missing_items"]:
+                    print(f"[{name}/{u}] items not found in source: {', '.join(d['missing_items'])}")
+                if d["checks"]:
+                    print(f"[{name}/{u}] {len(d['checks'])} reconciliation differences")
         print(f"Report written to {args.out}")
     return 0
 

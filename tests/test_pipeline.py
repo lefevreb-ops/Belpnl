@@ -6,10 +6,10 @@ from pathlib import Path
 from belpnl import db, extract, pnl, report
 
 SECTORS = ["S1311", "S1312", "S1313", "S1314", "S13"]
-ITEMS = ["TR", "TE", "B9", "D2REC", "D5REC", "D41PAY", "D73PAY"]
+ITEMS = ["TR", "TE", "B9", "D2REC", "D5REC", "D41PAY", "D73PAY", "D7PAY_S1312"]
 # synthetic values per sector for year 2000 (unit MIO_EUR)
 VALS = {
-    "S1311": {"TR": 100, "TE": 110, "B9": -10, "D2REC": 40, "D5REC": 50, "D41PAY": 8, "D73PAY": 30},
+    "S1311": {"TR": 100, "TE": 110, "B9": -10, "D2REC": 40, "D5REC": 50, "D41PAY": 8, "D73PAY": 30, "D7PAY_S1312": 30},
     "S1312": {"TR": 60, "TE": 58, "B9": 2, "D2REC": 5, "D5REC": 10, "D41PAY": 1},
     "S1313": {"TR": 20, "TE": 21, "B9": -1, "D2REC": 3, "D5REC": 7, "D41PAY": 1},
     "S1314": {"TR": 80, "TE": 79, "B9": 1, "D2REC": 0, "D5REC": 2, "D41PAY": 0},
@@ -21,16 +21,35 @@ VALS = {
 def synthetic_doc():
     dims = {"freq": ["A"], "unit": ["MIO_EUR"], "sector": SECTORS, "na_item": ITEMS,
             "geo": ["BE"], "time": ["2000"]}
+    return _doc(dims, lambda c: VALS[c["sector"]].get(c["na_item"]),
+                lambda c: "p" if (c["sector"], c["na_item"]) == ("S13", "TR") else None)
+
+
+COFOG = {  # synthetic expenditure by function, per sector: TOTAL, GF01, GF0101, GF0108, GF10
+    "S1311": [110, 80, 50, 30, 30], "S1312": [58, 58, 58, 0, 0], "S1313": [21, 21, 21, 0, 0],
+    "S1314": [79, 0, 0, 0, 79], "S13": [238, 129, 129, 0, 109],
+}
+COFOG_CODES = ["TOTAL", "GF01", "GF0101", "GF0108", "GF10"]
+
+
+def synthetic_cofog_doc():
+    dims = {"freq": ["A"], "unit": ["MIO_EUR"], "sector": SECTORS, "cofog99": COFOG_CODES,
+            "na_item": ["TE"], "geo": ["BE"], "time": ["2000"]}
+    return _doc(dims, lambda c: COFOG[c["sector"]][COFOG_CODES.index(c["cofog99"])])
+
+
+def _doc(dims, value_of, flag_of=lambda c: None):
+    import itertools
     ids = list(dims)
     size = [len(dims[d]) for d in ids]
     value, status = {}, {}
-    for si, s in enumerate(SECTORS):
-        for ii, it in enumerate(ITEMS):
-            if it in VALS[s]:
-                flat = si * len(ITEMS) + ii      # other dims have size 1
-                value[str(flat)] = VALS[s][it]
-                if s == "S13" and it == "TR":
-                    status[str(flat)] = "p"
+    for flat, combo in enumerate(itertools.product(*(dims[d] for d in ids))):
+        c = dict(zip(ids, combo))
+        v = value_of(c)
+        if v is not None:
+            value[str(flat)] = v
+            if flag_of(c):
+                status[str(flat)] = flag_of(c)
     return {
         "version": "2.0", "class": "dataset", "updated": "2000-01-01T00:00:00Z",
         "id": ids, "size": size, "value": value, "status": status,
@@ -64,7 +83,8 @@ class PipelineTest(unittest.TestCase):
         fed = v["S1311"][2000]
         self.assertEqual(fed["REV_TAX"], 90)
         self.assertEqual(fed["REV__OTHER"], 10)          # TR 100 - taxes 90
-        self.assertEqual(fed["EXP__OTHER"], 102)         # TE 110 - interest 8
+        self.assertEqual(fed["D4PAY"], 8)                # not reported: sum of components
+        self.assertEqual(fed["EXP__OTHER"], 72)          # TE 110 - interest 8 - transfers 30
         self.assertEqual(fed["RES"], -10)
         self.assertEqual(fed["PRIM"], -2)
 
@@ -86,6 +106,26 @@ class PipelineTest(unittest.TestCase):
         db.load(self.con, recs, labels, origin="synthetic")
         cnt = self.con.execute("SELECT COUNT(*) FROM fact_gov_finance").fetchone()[0]
         self.assertEqual(cnt, self.n)
+
+    def test_cofog_and_transfers(self):
+        recs, labels = extract.parse_jsonstat(synthetic_cofog_doc())
+        db.load(self.con, recs, labels, origin="synthetic-cofog")
+        out = pnl.build_cofog(self.con, "MIO_EUR")
+        v = out["values"]
+        self.assertEqual(v["S1311"][2000]["GF01"], 80)
+        self.assertEqual(v["ELIM"][2000]["GF0108"], -30)
+        self.assertEqual(v["ELIM"][2000]["TOTAL"], -30)
+        self.assertEqual(out["checks"], [])                 # COFOG total == TE
+        self.assertNotIn("GF01__OTHER", v["S1311"][2000])  # groups add up
+        self.assertEqual(pnl.transfers(self.con, "MIO_EUR"), {2000: {"D7": {"S1311": {"S1312": 30}}}})
+        html_path = Path(self.tmp.name) / "c.html"
+        data = report.render(self.con, html_path)
+        self.assertIn("cofog", data["statements"])
+
+    def test_intra_gov_zero_when_consolidated(self):
+        v = pnl.build(self.con, "MIO_EUR")["values"]
+        self.assertEqual(v["S13"][2000]["D73PAY"], 0.0)
+        self.assertEqual(v["ELIM"][2000]["D73PAY"], -30)
 
     def test_report(self):
         out = Path(self.tmp.name) / "r.html"
