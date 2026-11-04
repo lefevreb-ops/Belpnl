@@ -98,7 +98,7 @@ function fmt(v) {
   if (v === null || v === undefined) return "–";
   const dp = state.unit === "MIO_EUR" ? 0 : 1;
   const s = Math.abs(v).toLocaleString("en-BE", { minimumFractionDigits: dp, maximumFractionDigits: dp });
-  return v < 0 ? "−" + s : s;
+  return v < 0 && /[1-9]/.test(s) ? "−" + s : s;
 }
 function visible(l) {
   let p = l.parent;
