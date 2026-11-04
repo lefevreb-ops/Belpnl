@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Belgian Government P&amp;L</title>
+<style>
+:root {
+  --bg: #f7f7f5; --surface: #ffffff; --text: #1d1d1f; --muted: #6b6b70;
+  --border: #e3e3e0; --accent: #2457c5; --pos: #1d7a46; --neg: #b3261e;
+  --row-total: #f0f2f7; --row-hover: #f5f7fb; --elim: #fbf6ec;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141416; --surface: #1c1c1f; --text: #ececee; --muted: #9a9aa2;
+    --border: #2e2e33; --accent: #7aa2ff; --pos: #5cc98a; --neg: #ff8a80;
+    --row-total: #24262d; --row-hover: #22242a; --elim: #2a261d;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141416; --surface: #1c1c1f; --text: #ececee; --muted: #9a9aa2;
+  --border: #2e2e33; --accent: #7aa2ff; --pos: #5cc98a; --neg: #ff8a80;
+  --row-total: #24262d; --row-hover: #22242a; --elim: #2a261d;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+.sub { color: var(--muted); margin: 0 0 20px; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; margin-bottom: 14px; }
+.controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+select, button { font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; }
+button { cursor: pointer; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 7px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { white-space: normal; min-width: 96px; max-width: 130px; font-size: 12px; font-weight: 600; color: var(--muted); text-align: right; vertical-align: bottom;
+  position: sticky; top: 0; background: var(--surface); }
+th:first-child, td:first-child { text-align: left; position: sticky; left: 0; background: var(--surface); z-index: 1; }
+th:first-child { z-index: 2; }
+td { text-align: right; }
+tr:hover td { background: var(--row-hover); }
+tr.d0 td { background: var(--row-total); font-weight: 650; }
+tr.d1 td { font-weight: 550; }
+tr.other td { color: var(--muted); font-style: italic; }
+td.elim, th.elim { background: var(--elim) !important; }
+td.cons, th.cons { font-weight: 650; }
+.tog { display: inline-block; width: 18px; color: var(--muted); cursor: pointer; user-select: none; }
+.code { color: var(--muted); font-size: 11px; margin-left: 6px; }
+.neg { color: var(--neg); }
+sup.flag { color: var(--muted); font-size: 10px; margin-left: 2px; }
+.notes { color: var(--muted); font-size: 12px; margin-top: 14px; }
+.notes p { margin: 4px 0; }
+.empty { padding: 40px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Belgian general government — consolidated P&amp;L</h1>
+  <p class="sub" id="subtitle"></p>
+
+  <div class="controls">
+    <div>
+      <div class="seg" role="group" aria-label="View">
+        <button data-view="cons" aria-pressed="true">By subsector</button>
+        <button data-view="ts" aria-pressed="false">Over time</button>
+      </div>
+    </div>
+    <label id="yearCtl">Year <select id="year"></select></label>
+    <label id="sectorCtl" hidden>Sector <select id="sector"></select></label>
+    <label>Unit <select id="unit"></select></label>
+    <label id="fromCtl" hidden>From <select id="from"></select></label>
+    <div><button id="expand">Expand all</button> <button id="collapse">Collapse all</button></div>
+  </div>
+
+  <div class="card"><div class="scroll"><table id="t"></table></div></div>
+
+  <div class="notes" id="notes"></div>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const $ = (id) => document.getElementById(id);
+const state = { view: "cons", unit: Object.keys(DATA.units)[0], year: null, sector: null, from: null, open: new Set() };
+
+const U = () => DATA.units[state.unit];
+const lines = DATA.lines;
+const byId = Object.fromEntries(lines.map(l => [l.id, l]));
+DATA.lines.filter(l => l.depth === 0).forEach(l => state.open.add(l.id));
+
+function fmt(v) {
+  if (v === null || v === undefined) return "–";
+  const dp = state.unit === "MIO_EUR" ? 0 : 1;
+  const s = Math.abs(v).toLocaleString("en-BE", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  return v < 0 ? "−" + s : s;
+}
+function visible(l) {
+  let p = l.parent;
+  while (p) { if (!state.open.has(p)) return false; p = byId[p].parent; }
+  return true;
+}
+function columns() {
+  const u = U();
+  if (state.view === "cons") {
+    const cols = [];
+    DATA.sectors.filter(s => s.kind === "sub").forEach(s => cols.push({ key: s.code, year: state.year, label: s.label }));
+    cols.push({ key: "SUM", year: state.year, label: "Σ subsectors" });
+    cols.push({ key: "ELIM", year: state.year, label: "Consolidation eliminations", cls: "elim" });
+    DATA.sectors.filter(s => s.kind === "cons").forEach(s => cols.push({ key: s.code, year: state.year, label: s.label, cls: "cons" }));
+    return cols;
+  }
+  return u.years.filter(y => y >= state.from).map(y => ({ key: state.sector, year: y, label: String(y) }));
+}
+function flagFor(l, c) {
+  if (!l.item) return "";
+  const f = (((U().flags || {})[c.key] || {})[c.year] || {})[l.item];
+  return f ? `<sup class="flag" title="Eurostat flag">${f}</sup>` : "";
+}
+function hasValue(l) {
+  // hide residual lines that are empty everywhere in the current table
+  if (!l.other) return true;
+  return columns().some(c => { const v = ((U().values[c.key] || {})[c.year] || {})[l.id]; return v !== undefined && v !== null && Math.abs(v) >= 0.05; });
+}
+function render() {
+  const u = U(), t = $("t");
+  if (!u.years.length) { t.innerHTML = `<tr><td class="empty">No data loaded yet — run <code>python -m belpnl all</code>.</td></tr>`; return; }
+  const cols = columns();
+  let h = `<thead><tr><th>${u.label}</th>${cols.map(c => `<th class="${c.cls || ""}">${c.label}</th>`).join("")}</tr></thead><tbody>`;
+  for (const l of lines) {
+    if (!visible(l) || !hasValue(l)) continue;
+    const tog = l.hasKids ? `<span class="tog" data-id="${l.id}">${state.open.has(l.id) ? "▾" : "▸"}</span>` : `<span class="tog"></span>`;
+    const pad = 8 + l.depth * 18;
+    h += `<tr class="d${l.depth}${l.other ? " other" : ""}"><td style="padding-left:${pad}px">${tog}${l.label}${l.item ? `<span class="code">${l.item}</span>` : ""}</td>`;
+    for (const c of cols) {
+      const v = ((u.values[c.key] || {})[c.year] || {})[l.id];
+      const neg = v < 0 && (l.id === "RES" || l.id === "PRIM" || c.key === "ELIM") ? " neg" : "";
+      h += `<td class="${c.cls || ""}${neg}">${fmt(v)}${flagFor(l, c)}</td>`;
+    }
+    h += "</tr>";
+  }
+  t.innerHTML = h + "</tbody>";
+  notes();
+}
+function notes() {
+  const u = U(), n = [];
+  n.push("Source: Eurostat <code>" + DATA.meta.dataset + "</code> (ESA 2010 government finance statistics), geo " + DATA.meta.geo +
+    (DATA.meta.source_updated ? ", dataset updated " + DATA.meta.source_updated.slice(0, 10) : "") +
+    (DATA.meta.loaded_at ? ", loaded " + DATA.meta.loaded_at.slice(0, 10) : "") + ".");
+  n.push("Expenditure is shown as positive amounts. Each subsector is consolidated internally; “Consolidation eliminations” = general government (S13) − Σ subsectors, i.e. flows between government levels (e.g. federal transfers to Communities, Regions and social security).");
+  n.push("“Other / not allocated” reconciles listed components with the reported total. Flags: p = provisional, e = estimated, b = break in series, d = definition differs.");
+  if (u.missing_items.length) n.push("Items not present in the loaded data: " + u.missing_items.join(", ") + ".");
+  if (u.checks.length) n.push(u.checks.length + " sector-years where revenue − expenditure differs from reported B9.");
+  $("notes").innerHTML = n.map(x => `<p>${x}</p>`).join("");
+}
+function init() {
+  const u = U();
+  $("unit").innerHTML = Object.entries(DATA.units).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("");
+  const years = u.years.slice().reverse();
+  $("year").innerHTML = years.map(y => `<option>${y}</option>`).join("");
+  $("from").innerHTML = u.years.map(y => `<option>${y}</option>`).join("");
+  $("sector").innerHTML = DATA.sectors.slice().reverse().map(s => `<option value="${s.code}">${s.label}</option>`).join("");
+  state.year = years[0]; state.sector = $("sector").value;
+  state.from = u.years[Math.max(0, u.years.length - 10)];
+  $("from").value = state.from;
+  $("subtitle").textContent = "Revenue, expenditure and balance by level of government, ESA 2010" + (u.years.length ? ` · ${u.years[0]}–${u.years[u.years.length - 1]}` : "");
+
+  document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => {
+    state.view = b.dataset.view;
+    document.querySelectorAll("[data-view]").forEach(x => x.setAttribute("aria-pressed", x === b));
+    $("yearCtl").hidden = state.view !== "cons";
+    $("sectorCtl").hidden = $("fromCtl").hidden = state.view !== "ts";
+    render();
+  });
+  $("year").onchange = e => { state.year = +e.target.value; render(); };
+  $("sector").onchange = e => { state.sector = e.target.value; render(); };
+  $("from").onchange = e => { state.from = +e.target.value; render(); };
+  $("unit").onchange = e => { state.unit = e.target.value; render(); };
+  $("expand").onclick = () => { lines.filter(l => l.hasKids).forEach(l => state.open.add(l.id)); render(); };
+  $("collapse").onclick = () => { state.open.clear(); render(); };
+  $("t").onclick = e => {
+    const id = e.target.dataset && e.target.dataset.id; if (!id) return;
+    state.open.has(id) ? state.open.delete(id) : state.open.add(id); render();
+  };
+  render();
+}
+init();
+</script>
+</body>
+</html>
