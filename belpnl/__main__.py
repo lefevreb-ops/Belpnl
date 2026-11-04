@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from . import config, db, extract, report
+from . import config, db, extract, i18n, report
 
 DEFAULT_DB = "data/belpnl.sqlite"
 DEFAULT_RAW = "data/raw"
@@ -46,6 +46,13 @@ def main(argv=None):
             n = db.load(con, recs, labels, origin=url, source_updated=doc.get("updated"),
                         dataset=dataset)
             print(f"Loaded {n} rows from {dataset} (source updated {doc.get('updated')})")
+            if "cofog99" in labels:
+                for lang in i18n.EUROSTAT_LANGS:
+                    try:
+                        tdoc = extract.fetch(extract.label_url(dataset, lang, filters))
+                        db.load_translations(con, extract.parse_jsonstat(tdoc)[1], lang)
+                    except OSError as exc:
+                        print(f"No {lang.upper()} labels for {dataset}: {exc}", file=sys.stderr)
     if args.cmd == "load":
         doc = extract.load_file(args.file)
         recs, labels = extract.parse_jsonstat(doc)

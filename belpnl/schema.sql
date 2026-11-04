@@ -64,6 +64,15 @@ CREATE TABLE IF NOT EXISTS dim_cofog (
     level        INTEGER NOT NULL            -- 0 total, 1 division, 2 group
 );
 
+-- Translated labels: dim = pnl_line | sector | unit | transfer | cofog
+CREATE TABLE IF NOT EXISTS dim_label (
+    dim          TEXT NOT NULL,
+    code         TEXT NOT NULL,
+    lang         TEXT NOT NULL CHECK (lang IN ('en', 'fr', 'nl', 'de')),
+    label        TEXT NOT NULL,
+    PRIMARY KEY (dim, code, lang)
+);
+
 -- Expenditure by function (COFOG), Eurostat gov_10a_exp
 CREATE TABLE IF NOT EXISTS fact_gov_cofog (
     source_id    TEXT NOT NULL REFERENCES dim_source(source_id),

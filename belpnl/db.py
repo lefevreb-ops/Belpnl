@@ -3,7 +3,7 @@ import datetime as dt
 import sqlite3
 from pathlib import Path
 
-from . import config
+from . import config, i18n
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 DESCRIPTIONS = {
@@ -40,11 +40,58 @@ def seed(con):
             "sort_order=excluded.sort_order", (code, label, kind, order))
     for code, label in config.UNIT_LABELS.items():
         con.execute("INSERT OR IGNORE INTO dim_unit VALUES (?,?)", (code, label))
+    seed_labels(con)
     con.execute("DELETE FROM dim_pnl_line")
     for order, (line, parent, label, item, sign) in enumerate(config.PNL):
         con.execute("INSERT INTO dim_pnl_line VALUES (?,?,?,?,?,?)",
                     (line, parent, label, item, sign, order))
     con.commit()
+
+
+def set_labels(con, dim, code, labels):
+    """labels: {lang: label}"""
+    con.executemany("INSERT INTO dim_label VALUES (?,?,?,?) ON CONFLICT(dim, code, lang) "
+                    "DO UPDATE SET label=excluded.label",
+                    [(dim, code, lang, text) for lang, text in labels.items() if text])
+
+
+def seed_labels(con):
+    for line, _, label, _, _ in config.PNL:
+        set_labels(con, "pnl_line", line, i18n.with_en(label, i18n.PNL.get(line)))
+    for line, _, _, item, _ in config.PNL:
+        if item and any(p == line for _, p, *_ in config.PNL):
+            other = i18n.OTHER.get(line, i18n.OTHER[""])
+            set_labels(con, "pnl_line", line + "__OTHER", dict(zip(i18n.LANGS, other)))
+    for code, label, _, _ in config.SECTORS:
+        set_labels(con, "sector", code, i18n.with_en(label, i18n.SECTORS.get(code)))
+    for code, label in config.UNIT_LABELS.items():
+        set_labels(con, "unit", code, i18n.with_en(label, i18n.UNITS.get(code)))
+    for code, label in config.TRANSFER_TYPES:
+        set_labels(con, "transfer", code, i18n.with_en(label, i18n.TRANSFER_TYPES.get(code)))
+    for code, label in i18n.COFOG_NL.items():
+        set_labels(con, "cofog", code, {"nl": label})
+
+
+def load_translations(con, labels, lang):
+    """Store translated COFOG labels from a JSON-stat document fetched in another language."""
+    n = 0
+    for code, label in labels.get("cofog99", {}).items():
+        set_labels(con, "cofog", code, {lang.lower(): label})
+        n += 1
+    con.commit()
+    return n
+
+
+def labels(con, dim):
+    """{code: {lang: label}} with English as fallback for missing languages."""
+    out = {}
+    for code, lang, label in con.execute(
+            "SELECT code, lang, label FROM dim_label WHERE dim=?", (dim,)):
+        out.setdefault(code, {})[lang] = label
+    for d in out.values():
+        for lang in i18n.LANGS:
+            d.setdefault(lang, d.get("en") or next(iter(d.values())))
+    return out
 
 
 def _cofog_parent(code):
@@ -76,6 +123,7 @@ def load(con, records, labels, origin, source_updated=None, dataset=None):
         parent, level = _cofog_parent(code)
         con.execute("INSERT INTO dim_cofog VALUES (?,?,?,?) ON CONFLICT(cofog_code) "
                     "DO UPDATE SET label=excluded.label", (code, label, parent, level))
+        set_labels(con, "cofog", code, {"en": label})
 
     known = {s[0] for s in config.SECTORS}
     keep = [r for r in records

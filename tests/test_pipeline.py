@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from belpnl import db, extract, pnl, report
+from belpnl import config, db, extract, i18n, pnl, report
 
 SECTORS = ["S1311", "S1312", "S1313", "S1314", "S13"]
 ITEMS = ["TR", "TE", "B9", "D2REC", "D5REC", "D41PAY", "D73PAY", "D7PAY_S1312"]
@@ -133,6 +133,19 @@ class PipelineTest(unittest.TestCase):
         html = out.read_text()
         self.assertNotIn("/*__DATA__*/null", html)
         self.assertIn('"REV__OTHER"', html)
+
+    def test_translations_complete(self):
+        data = report.render(self.con, Path(self.tmp.name) / "l.html")
+        for line in data["statements"]["pnl"]["lines"]:
+            self.assertEqual(set(line["labels"]), set(i18n.LANGS), line["id"])
+            if line["id"] in i18n.PNL:      # translated, not English fallback
+                self.assertEqual(line["labels"]["fr"], i18n.PNL[line["id"]][0])
+        for s in data["sectors"]:
+            self.assertEqual(len(set(s["labels"].values())), 4, s["code"])
+        for lang in i18n.LANGS:
+            self.assertEqual(set(data["ui"][lang]), set(data["ui"]["en"]))
+        self.assertEqual(set(i18n.PNL), {n[0] for n in config.PNL})
+        self.assertIn("?format=JSON&lang=FR", extract.label_url("gov_10a_exp", "fr"))
 
     def test_url(self):
         url = extract.build_url()

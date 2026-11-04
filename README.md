@@ -30,6 +30,14 @@ consolidated profit-and-loss statement:
   The P&L and function tabs can show all levels of government for one year
   (with a consolidation bridge) or one level over time.
 
+The report is available in **English, French, Dutch and German**. Use the
+EN / FR / NL / DE switch at the top of the page, or open it with `?lang=fr`.
+The page remembers your choice and otherwise follows the browser language.
+All labels are stored in the `dim_label` table. The French and German
+spending-function (COFOG) names are Eurostat's official labels, downloaded
+during extraction. Eurostat has no Dutch, so the Dutch names, like the other
+translations, are in `belpnl/i18n.py`.
+
 The project uses only the Python standard library (3.10+).
 
 ## Usage
@@ -54,6 +62,7 @@ upserts, and each load is logged in `etl_run`.
 | `fact_gov_finance` | value per source × sector × ESA item × unit × year, plus the Eurostat flag (p = provisional, e = estimated, …) |
 | `dim_sector`, `dim_item`, `dim_unit`, `dim_source` | dimensions; item labels come from the source |
 | `dim_pnl_line` | the P&L hierarchy (parent/child, mapped ESA item, sign) |
+| `dim_label` | translated labels (en, fr, nl, de) for P&L lines, sectors, units, flow types and COFOG |
 | `etl_run` | load log: timestamp, origin URL or file, source `updated` stamp, row count |
 | `fact_gov_cofog` | expenditure by function: sector × COFOG code × item × unit × year |
 | `dim_cofog` | COFOG hierarchy (total → division → group) |

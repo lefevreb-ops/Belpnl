@@ -8,16 +8,22 @@ from . import config
 
 
 def build_url(dataset=config.DATASET, geo=config.GEO, sectors=None, units=None,
-              since=config.SINCE_YEAR, filters=None):
+              since=config.SINCE_YEAR, filters=None, lang="EN"):
     sectors = sectors or [s[0] for s in config.SECTORS]
     units = units or config.UNITS
-    params = [("format", "JSON"), ("lang", "EN"), ("geo", geo),
+    params = [("format", "JSON"), ("lang", lang.upper()), ("geo", geo),
               ("sinceTimePeriod", str(since))]
     params += [("sector", s) for s in sectors]
     params += [("unit", u) for u in units]
     for dim, codes in (filters or {}).items():
         params += [(dim, c) for c in codes]
     return f"{config.EUROSTAT_API}/{dataset}?{urllib.parse.urlencode(params)}"
+
+
+def label_url(dataset, lang, filters=None):
+    """Small query (one year, one sector) whose only purpose is its translated labels."""
+    url = build_url(dataset=dataset, sectors=["S13"], units=["MIO_EUR"], filters=filters, lang=lang)
+    return url.replace(f"sinceTimePeriod={config.SINCE_YEAR}", "lastTimePeriod=1")
 
 
 def fetch(url, raw_dir=None, timeout=120):

@@ -124,14 +124,3 @@ TRANSFER_TYPES = [
     ("D4", "Property income (interest...)"),
 ]
 
-# Meaningful names for the balancing line under specific parents
-# (default: "Other / not allocated").
-OTHER_LABELS = {
-    "D21REC": "Excise duties and other taxes on products",
-    "D51REC": "Other taxes on income",
-    "D61REC": "Imputed contributions, other",
-    "D62PAY": "Other functions (sickness, disability, family, social exclusion...)",
-    "D7REC": "Other (miscellaneous, insurance claims...)",
-    "D7PAY": "Other",
-    "P5": "Changes in inventories and valuables",
-}
